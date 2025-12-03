@@ -1,0 +1,21 @@
+1. Nastavíme flashback
+sqlplus> alter database flashback on;
+
+2. Povolíme FSF
+dgmgrl> enable fast_start failover;
+
+3. Vytvoříme proces 
+unix> nohup dgmgrl sys/Ora19sys@PREUP "start observer file='$ORACLE_HOME/dbs/fsfo.dat'" -logfile $HOME/observer.log &
+
+4. Zkontrolujeme, že běží
+unix> jobs
+
+Vzor:
+oracle@srvphaeudb01[PREUP]:~> jobs
+[1]+  Running                 nohup dgmgrl sys/Ora19sys@PREUP "start observer file='$ORACLE_HOME/dbs/fsfo.dat'" -logfile $HOME/observer.log &
+
+
+
+5. Krok 3-4 opakujeme pro druhý/třetí server
+
+Uprava observer service na Windows: regedit -> HKEY_LOCAL_MACHINE -> SYSTEM -> CuurentControlSet -> Services -> Observer_DBNAME -> Parameter -> Application

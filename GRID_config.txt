@@ -1,0 +1,189 @@
+
+1. Kontrola, ze disky existujou 
+oracleasm listdisks
+
+2. vylistovat si disky
+
+[root@srvZPSdb02t sbin]# lsblk
+NAME                 MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
+sda                    8:0    0  100G  0 disk
+├─sda1                 8:1    0    1G  0 part /boot
+└─sda2                 8:2    0   99G  0 part
+  ├─ol_oracle-slash  252:0    0 56.1G  0 lvm  /
+  ├─ol_oracle-swap   252:1    0  7.9G  0 lvm
+  └─ol_oracle-varlog 252:4    0   35G  0 lvm  /var/log
+sdb                    8:16   0  100G  0 disk
+├─ASM-DATA           252:2    0   50G  0 lvm
+└─ASM-FRA            252:3    0   50G  0 lvm
+sdc                    8:32   0  300G  0 disk
+sr0                   11:0    1 1024M  0 rom
+
+
+-- vidim, ze sdc je ten disk pro asm
+
+
+3. Pod rootem
+
+pvcreate /dev/sdc
+vgextend ASM /dev/sdc
+vgs - kontrola
+lvs - kontrola
+lvextend -L 200G /dev/ASM/DATA
+lvextend -L 100G /dev/ASM/FRA
+lvs - kontrola
+
+neco takovyho to musi vyjet:
+ DATA   ASM       -wi-a----- <200.00g
+ FRA    ASM       -wi-a----- <200.00g
+
+4. pouze pokud delame migraci db pro upgrade - tak nastavit spravne etc/hosts a hostanem
+
+vi /etc/hosts
+vi /etc/hostname
+
+
+5. Pouze pro potřeby migrace -  Nastavit spravne hostname v cmd
+
+hostname srvIDMDB-test02
+
+-- v cmd bych uz mel po novem prihlaseni taky novy hostname
+
+
+ kontrola: ping  srvIDMDB-test02
+
+6. Instalce gridu 
+
+Pod rootem!:
+
+
+ cd /opt/oracle/product/19/grid/crs/install/
+ ./roothas.sh
+
+
+su - oracle
+cd /opt/oracle/product/19/grid/
+./bin/crsctl modify resource "ora.cssd" -init -attr "AUTO_START=1"  -unsupported
+bin/crsctl stop has
+bin/crsctl start has
+bin/crsctl check has - musi byt online
+bin/crsctl check css - musi byt online
+
+bin/crsctl stat res -t
+
+--------------------------------------------------------------------------------
+Name           Target  State        Server                   State details
+--------------------------------------------------------------------------------
+Local Resources
+--------------------------------------------------------------------------------
+ora.ons
+               OFFLINE OFFLINE      srvzpsdb02-test          STABLE
+--------------------------------------------------------------------------------
+Cluster Resources
+--------------------------------------------------------------------------------
+ora.cssd
+      1        ONLINE  ONLINE       srvzpsdb02-test          STABLE
+ora.diskmon
+      1        OFFLINE OFFLINE                               STABLE
+ora.evmd
+      1        ONLINE  ONLINE       srvzpsdb02-test          STABLE
+--------------------------------------------------------------------------------
+
+
+7. Pridani listeneru
+cd /opt/oracle/product/19/grid/bin
+./srvctl add listener -endpoints TCP:1621
+
+8. Pridani asm
+
+./srvctl add asm
+
+./crsctl stat res -t
+
+--------------------------------------------------------------------------------
+Name           Target  State        Server                   State details
+--------------------------------------------------------------------------------
+Local Resources
+--------------------------------------------------------------------------------
+ora.LISTENER.lsnr
+               OFFLINE OFFLINE      srvzpsdb02-test          STABLE
+ora.asm
+               OFFLINE OFFLINE      srvzpsdb02-test          STABLE
+ora.ons
+               OFFLINE OFFLINE      srvzpsdb02-test          STABLE
+--------------------------------------------------------------------------------
+Cluster Resources
+--------------------------------------------------------------------------------
+ora.cssd
+      1        ONLINE  ONLINE       srvzpsdb02-test          STABLE
+ora.diskmon
+      1        OFFLINE OFFLINE                               STABLE
+ora.evmd
+      1        ONLINE  ONLINE       srvzpsdb02-test          STABLE
+--------------------------------------------------------------------------------
+
+
+
+
+9. Nastartovani
+ 
+
+./srvctl start listener
+./srvctl start asm
+./srvctl enable asm
+./srvctl enable listener
+
+
+. oraenv - +ASM
+
+sqlplus / as sysasm
+create spfile from memory;
+
+./srvctl stop asm
+./srvctl start asm
+
+
+ssh -l root
+oracleasm scandisks
+oracleasm listdisks
+
+ssh -l oracle
+najit cestu k diskum - nejspis /dev/oracleasm/disks
+
+ssh -Xl oracle
+
+asmca - disk groups - create - change disovery path -> /dev/oracleasm/disks/* -> FRA (external) -> mount all 
+
+ORCL:*
+
+sqlplus / as sysasm
+alter diskgroup DATA resize all;
+select name, FREE_MB, total_mb from v$asm_diskgroup;
+
+
+
+crsctl stat res -t
+--------------------------------------------------------------------------------
+Name           Target  State        Server                   State details
+--------------------------------------------------------------------------------
+Local Resources
+--------------------------------------------------------------------------------
+ora.DATA.dg
+               ONLINE  ONLINE       srvzpsdb02-test          STABLE
+ora.FRA.dg
+               ONLINE  ONLINE       srvzpsdb02-test          STABLE
+ora.LISTENER.lsnr
+               ONLINE  ONLINE       srvzpsdb02-test          STABLE
+ora.asm
+               ONLINE  ONLINE       srvzpsdb02-test          Started,STABLE
+ora.ons
+               OFFLINE OFFLINE      srvzpsdb02-test          STABLE
+--------------------------------------------------------------------------------
+Cluster Resources
+--------------------------------------------------------------------------------
+ora.cssd
+      1        ONLINE  ONLINE       srvzpsdb02-test          STABLE
+ora.diskmon
+      1        OFFLINE OFFLINE                               STABLE
+ora.evmd
+      1        ONLINE  ONLINE       srvzpsdb02-test          STABLE
+--------------------------------------------------------------------------------

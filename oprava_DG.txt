@@ -1,0 +1,145 @@
+Diagnostika DG
+
+Z 99% procent nefunguje přenos archiv logů a to z 98% zaplněním FRA. Takže nejdřív uvolnit, pak DG.
+
+Jak poznáme, že je DG rozbitý a že nefunguje?
+
+Nastavime SID.
+> dgmgrl /
+DG> show configuration verbose;
+ 
+
+Pří opravě Data Guardu, kdy dojde k asynchronizaci, máme 2 možnosti jak problém vyřešit: 
+A. Provedeme restore.
+   Ovšem když je standby db až moc v pytli, tak to nempomuže a nezbývá než ji znovu vytvořit
+B. Smažeme standby a znovu vytvoříme
+
+
+------------------OPRAVA POMOCI RESTORU---------------------------
+ad A)
+1. Vypnutí FSF
+
+dgmgrl
+disable fast_start failover;
+
+2. Vypnutí DG
+ edit database "PGNSMC23" set state=apply-off;
+
+3. RMAN na standby
+
+RUN {
+ALLOCATE CHANNEL ch00 TYPE 'SBT_TAPE';
+send 'NB_ORA_SERV=clunbma01.mag.mepnet.cz, NB_ORA_CLIENT=DGGNSMC23.mag.mepnet.cz';
+RECOVER DATABASE;
+RELEASE CHANNEL ch00;
+}
+
+4. Zapnutí DG
+
+edit database "PGNSMC23" set state=apply-on;
+
+5. Zapnuti FSF
+
+enable fast_start failover;
+
+
+------------------OPRAVA METODOU SMAŽ A ZNOVU VYTVOŘ-----------------------------------------------
+ad B)
+
+Tohle na primáru ??? Je jedno kde - v command-line pomocí volání s SID to máme.
+
+1. dgmgrl sys/Ora19sys@PGNSMC23.mag.mepnet.cz
+disable fast_start failover;
+edit database PGNSMC23S set state=apply-off; -- použijeme DB_UNIQUE_NAME (pro rozlišení prim/sek).
+u v12 nutno zavřít jméno DB do dvojitých uvozovek ""
+
+2. Na standby straně  
+
+V SQLPlus smažeme standby databázi.
+
+Shell> cd $ORACLE_HOME/dbs
+SQL> create pfile from memory;
+
+Je-li to v GRIDu (je tam ASM v oratabu) použiju srvctl, jinak musím do sqlplus (shutdown abort).
+
+shell> srvctl stop database -d PGNSMC23S -o abort
+shell> sss
+SQL> startup mount exclusive restrict;
+SQL> drop database;
+
+
+3. ???
+
+Pod +ASM ??? adresar DAT i FRA ???
+
+smazat asm a fra - asmcmd - cd DATA/FRA - rm -rf PGNSMC23S
+srvctl modify database -d PGNSMC23S -p '' 
+srvctl start database -d PGNSMC23S -o nomount
+
+
+Na standby pod cílovým SID (tady PGNSMC33)
+
+4. rman target=sys/Ora19sys@PGNSMC33.mag.mepnet.cz auxiliary=sys/Ora19sys@PGNSMC33S.mag.mepnet.cz
+V RMANu pak dáme:
+
+DUPLICATE TARGET DATABASE
+FOR STANDBY
+FROM ACTIVE DATABASE
+DORECOVER
+SPFILE
+SET "db_unique_name"="PGNSMC33S" COMMENT "Is a standby"
+SET FAL_SERVER="pgnsmc33.mag.mepnet.cz" COMMENT "Is primary"
+NOFILENAMECHECK;
+
+
+
+Na primárním zase zapneme
+
+5. dgmgrl sys/Ora19sys@PGNSMC23.mag.mepnet.cz
+ edit database PGNSMC23S set state=apply-on;
+
+
+6. Na standby
+shell>srvctl stop database -d PGNSMC29S -o abort
+shell> srvctl start database -d PGNSMC29S -o mount
+
+
+
+
+7. sss - na standby
+Následující třui příkazy je nutno provést všechny. Občas nějaký (1 či 2) zahlásí chybu. Pak pouštíme další z nich tak dlouho, až se nám všechny tři v uvedeném pořadí povedou.
+alter database recover managed standby database cancel;
+alter database flashback on;
+alter database recover managed standby database disconnect from session;
+ 
+Na primáru:
+8. dgmgrl sys/Ora19sys@PGNSMC29.mag.mepnet.cz
+   enable fast_start failover;
+
+9.(VOLITELNÝ - jenom pokud nenaběhnou observery) otevrit observer servery 
+Že nenaběhly observery poznám dle základní diagnostiky: show config verb.;
+
+Přihlásím se na Windows mašiny (viz níže WS+APL 10). Realizuji vždy pro obě, tedy APL i WS.
+Ve Win spustím:
+
+cmd 
+>dgmgrl sys/Ora19sys@PGNSMC23.mag.mepnet.cz
+>stop observer "SRVGINISWS10";
+>stop observer "SRVGINISAPL10";
+
+C:\Oracle\admin\MC29\observer - smazat vse
+
+services - observer - stop a start (občas nefunguje), lepší je přes command-line.
+start observer "SRVGINISWS10";
+start observer "SRVGINISAPL10";
+
+10.  
+na primary
+rman target /
+configure archivelog deletion policy to applied on all standby backed up 1 times to sbt;
+
+na standby:
+rman target /
+configure archivelog deletion policy to applied on standby;
+
+ 

@@ -1,0 +1,95 @@
+===
+
+Example for Cloning PDB from NON-CDB via Dblink (Doc ID 1928653.1)
+Oracle Multimedia Becomes Invalid After Running Noncdb_to_pdb.sql In 12.1.0.2 (Doc ID 2552686.1)
+
+===
+
+source: srvdevcoradb01t (DEVCORST)
+target: ftoramag01
+
+===
+
+----------
+on source:
+----------
+
+create user srcdblink identified by srcdblink;
+
+grant create session, create pluggable database, select_catalog_role to srcdblink;
+
+grant read on sys.enc$ to srcdblink;
+
+
+----------
+on target:
+----------
+
+MIGDB =
+  (DESCRIPTION =
+    (ADDRESS = (PROTOCOL = TCP)(HOST = srvdevcoradb01t.mag.mepnet.cz)(PORT = 1521))
+      (CONNECT_DATA =
+      (SERVER = DEDICATED)
+      (SERVICE_NAME = DEVCORST )
+    )
+  )
+
+tnsping MIGDB
+
+CREATE DATABASE LINK MIGDBLINK CONNECT TO srcdblink IDENTIFIED BY srcdblink USING 'MIGDB'; 
+
+CREATE PLUGGABLE DATABASE DEVCORST FROM DEVCORST@MIGDBLINK REFRESH MODE MANUAL;
+
+-- Start data replication
+ALTER PLUGGABLE DATABASE DEVCORST REFRESH;
+
+-- Or alternatively use the line below in case you want refresh every 5 min until final migration go live
+-- ALTER PLUGGABLE DATABASE DEVCORST REFRESH MODE EVERY 5 MINUTES;
+
+-- Stop data replication
+ALTER PLUGGABLE DATABASE DEVCORST REFRESH MODE NONE;
+
+ALTER PLUGGABLE DATABASE DEVCORST OPEN;
+-- ignore Warning: PDB altered with errors. - will be fixed later
+
+cd $ORACLE_HOME/OPatch
+./datapatch -verbose 
+
+ALTER SESSION SET CONTAINER = DEVCORST;
+SHOW CON_NAME
+
+@?/rdbms/admin/noncdb_to_pdb.sql
+
+-- check if Oracle multimedia is invalid
+SELECT COMP_NAME, STATUS, VERSION FROM DBA_REGISTRY;
+
+-- if invalid then
+-- reinstall invalid Oracle multimedia and compile invalid objects 
+-- otherwise skip it 
+@?/ord/im/admin/imremov.sql
+@?/ord/admin/ordinst.sql SYSAUX SYSAUX
+@?/ord/im/admin/iminst.sql
+@?/rdbms/admin/utlrp.sql 
+
+EXECUTE VALIDATE_ORDIM;
+
+-- and continue here, re-open needed to get rid of restricted mode
+ALTER PLUGGABLE DATABASE DEVCORST CLOSE IMMEDIATE;
+ALTER PLUGGABLE DATABASE DEVCORST OPEN;
+
+-- check the new PDB 
+SELECT COMP_NAME, STATUS, VERSION FROM DBA_REGISTRY;
+SELECT * FROM PDB_PLUG_IN_VIOLATIONS WHERE TYPE='ERROR' AND STATUS<>'RESOLVED';
+SELECT NAME, OPEN_MODE, RESTRICTED FROM V$PDBS;
+
+
+
+-- How to drop the new PDB
+-- ALTER PLUGGABLE DATABASE DEVCORST CLOSE IMMEDIATE;
+-- DROP PLUGGABLE DATABASE DEVCORST INCLUDING DATAFILES;
+
+-- TODO: configure listener, register in grid, check parameters
+
+
+
+

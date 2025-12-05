@@ -1,0 +1,29 @@
+How to Clone Pluggable Database (PDB) (Local, Remote, non-CDB, Refreshable) (Doc ID 3092501.1)
+
+===============
+on source (CDB)
+===============
+
+CREATE USER c##remote_clone_user IDENTIFIED BY remote_clone_user CONTAINER=ALL;
+
+GRANT CREATE SESSION, CREATE PLUGGABLE DATABASE TO c##remote_clone_user CONTAINER=ALL; 
+
+-- LOCAL_UNDO_ENABLED has to be TRUE 
+SELECT property_name, property_value FROM database_properties WHERE property_name = 'LOCAL_UNDO_ENABLED';
+
+-- ALTER PLUGGABLE DATABASE PDB1 OPEN READ ONLY FORCE ??
+
+===============
+on target (CDB)
+===============
+
+-- create DB link using EZ connect string for particular PDB on source
+CREATE DATABASE LINK clone_link CONNECT TO c##remote_clone_user IDENTIFIED BY remote_clone_user USING 'ftoramag01.mag.mepnet.cz:1521/devcorst';
+
+CREATE PLUGGABLE DATABASE devcorst FROM devcorst@clone_link;
+
+ALTER PLUGGABLE DATABASE devcorst OPEN;
+
+ALTER PLUGGABLE DATABASE devcorst SAVE STATE;
+
+DROP DATABASE LINK clone_link;
